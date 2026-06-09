@@ -1,0 +1,37 @@
+{
+  "name": "ergo-mse",
+  "version": "0.1.0",
+  "description": "An ergonomic replacement for MediaSource and SourceBuffer with support for text tracks and time mapping",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "lint": "npm-run-all -p lint:*",
+    "lint:check": "eslint src",
+    "lint:fix": "eslint src --fix",
+    "lint:types": "tsc --noEmit",
+    "test": "tsx --test test/**/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/sinon": "^21.0.1",
+    "eslint": "^10.4.1",
+    "globals": "^17.6.0",
+    "jsdom": "^29.1.1",
+    "npm-run-all": "^4.1.5",
+    "sinon": "^18.0.0",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.60.1"
+  },
+  "keywords": [
+    "mediasource",
+    "sourcebuffer",
+    "video",
+    "streaming",
+    "hls",
+    "dash"
+  ],
+  "author": "",
+  "license": "MIT"
+}
