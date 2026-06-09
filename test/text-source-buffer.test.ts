@@ -206,18 +206,20 @@ test('TextSourceBuffer', async (t) => {
     assert.ok(true);
   });
 
-  await t.test('should translate remove start/end by wallAnchor', async () => {
+  await t.test('should call removeCue for cues that fall in the wall-clock range', async () => {
     const videoEl = createFakeVideoElement();
     const tsb = new TextSourceBuffer(videoEl, 'English', 'en');
-
     tsb.wallAnchor = 50;
 
-    // Queue a remove operation
-    const removePromise = tsb.remove(60, 70); // 60-50=10, 70-50=20
+    // Add a cue at player-time [10, 20) — wall-clock [60, 70)
+    const cue = new VTTCue(10, 20, 'Test');
+    tsb.textTrack.addCue(cue);
 
-    // Should resolve without error
-    await removePromise;
-    assert.ok(true);
+    // Remove wall-clock [60, 70) → player-time [10, 20)
+    await tsb.remove(60, 70);
+
+    assert.equal((tsb.textTrack.removeCue as sinon.SinonStub).called, true);
+    assert.equal((tsb.textTrack.removeCue as sinon.SinonStub).firstCall.args[0], cue);
   });
 
   await t.test('should abort queued operations', async () => {
@@ -266,26 +268,20 @@ test('TextSourceBuffer', async (t) => {
     assert.equal(tsb.appendWindowEnd, Infinity);
   });
 
-  await t.test('should track buffered ranges after append', async () => {
+  await t.test('should update buffered ranges and call addCue after appending VTT', async () => {
     const videoEl = createFakeVideoElement();
-    const tsb = new TextSourceBuffer(videoEl, 'English', 'en', 'vtt-sidecar');
+    const tsb = new TextSourceBuffer(videoEl, 'English', 'en', 'text/vtt');
 
-    const consoleStub = sinon.stub(console, 'warn');
+    const vttData = new TextEncoder().encode(
+      'WEBVTT\n\n00:00:00.000 --> 00:00:10.000\nTest cue\n'
+    );
 
-    try {
-      // Create minimal VTT data
-      const vttData = new TextEncoder().encode(`WEBVTT
+    await tsb.append(vttData);
 
-00:00:00.000 --> 00:00:10.000
-Test cue
-`);
-
-      // Append should complete without error
-      await tsb.append(vttData);
-      assert.ok(true);
-    } finally {
-      consoleStub.restore();
-    }
+    assert.equal(tsb.buffered.length, 1);
+    assert.equal(tsb.buffered.start(0), 0);
+    assert.equal(tsb.buffered.end(0), 10);
+    assert.equal((tsb.textTrack.addCue as sinon.SinonStub).called, true);
   });
 
   await t.test('should have ISourceBuffer interface', () => {

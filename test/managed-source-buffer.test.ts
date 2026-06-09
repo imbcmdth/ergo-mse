@@ -1,4 +1,5 @@
 import './test-helpers';
+import { MockMediaSource } from './test-helpers';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import sinon from 'sinon';
@@ -179,29 +180,56 @@ test('ManagedSourceBuffer', async (t) => {
 
 
 
+  await t.test('should validate type with MediaSource.isTypeSupported before changeType', () => {
+    const sb  = createFakeSourceBuffer();
+    const msb = new ManagedSourceBuffer(sb);
+    MockMediaSource.isTypeSupported.returns(true);
+    try {
+      msb.changeType('video/mp4; codecs="avc1"');
+      assert.equal(MockMediaSource.isTypeSupported.called, true);
+      assert.equal(MockMediaSource.isTypeSupported.firstCall.args[0], 'video/mp4; codecs="avc1"');
+      // changeType is synchronous in the queue processor
+      assert.equal((sb.changeType as sinon.SinonStub).called, true);
+      assert.equal((sb.changeType as sinon.SinonStub).firstCall.args[0], 'video/mp4; codecs="avc1"');
+    } finally {
+      MockMediaSource.isTypeSupported.reset();
+      MockMediaSource.isTypeSupported.returns(false);
+    }
+  });
+
+  await t.test('should throw NotSupportedError when isTypeSupported returns false', () => {
+    const sb  = createFakeSourceBuffer();
+    const msb = new ManagedSourceBuffer(sb);
+    // MockMediaSource.isTypeSupported returns false by default
+    assert.throws(
+      () => msb.changeType('unsupported/type'),
+      (err: any) => err instanceof DOMException && err.name === 'NotSupportedError'
+    );
+  });
+
   await t.test('should handle abort operation', async () => {
     const sb = createFakeSourceBuffer();
-    (sb as any).updating = false;
     const msb = new ManagedSourceBuffer(sb);
 
-    // Aborting when not updating should resolve immediately
+    // Aborting with an empty queue resolves immediately
     await msb.abort();
     assert.ok(true);
   });
 
-  await t.test('should reject all queued operations on error', () => {
-    const sb = createFakeSourceBuffer();
+  await t.test('should reject all queued operations when the SourceBuffer fires an error', async () => {
+    const sb  = createFakeSourceBuffer();
     const msb = new ManagedSourceBuffer(sb);
 
-    const data1 = new ArrayBuffer(5);
-    const data2 = new ArrayBuffer(5);
+    const p1 = msb.append(new ArrayBuffer(5));
+    const p2 = msb.append(new ArrayBuffer(5));
 
-    // Queue operations (without fully testing the error path)
-    msb.append(data1);
-    msb.append(data2);
+    // Fire the error handler that was registered for the first append
+    const errorHandler = (sb.addEventListener as sinon.SinonStub).args
+      .find((call: any[]) => call[0] === 'error')?.[1];
+    errorHandler();
 
-    // Verify both were queued
-    assert.equal((sb.appendBuffer as sinon.SinonStub).callCount, 1);
+    await assert.rejects(p1, /SourceBuffer error/);
+    await assert.rejects(p2, /SourceBuffer error/);
   });
 
   await t.test('should get timestampOffset without translation', () => {
