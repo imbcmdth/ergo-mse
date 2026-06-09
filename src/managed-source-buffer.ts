@@ -1,5 +1,7 @@
 import type { ISourceBuffer } from './i-source-buffer';
 import { OffsetTimeRanges } from './offset-time-ranges';
+import type { EventSink } from './event-sink';
+import { parseEmsgBoxes } from './mp4/emsg-parser';
 
 type MsbQueueEntry =
   | { kind: 'append';              data: ArrayBuffer | ArrayBufferView; resolve: () => void; reject: (e: Error) => void }
@@ -43,16 +45,43 @@ export class ManagedSourceBuffer implements ISourceBuffer {
    */
   wallAnchor = 0;
 
+  /** Shared event sink — set by ErgoMediaSource for video/audio buffers. */
+  #eventSink: EventSink | null = null;
+
   constructor(sourceBuffer: SourceBuffer) {
     this.#sourceBuffer = sourceBuffer;
+  }
+
+  /**
+   * Wire this buffer to the shared EventSink so that emsg v1 boxes found in
+   * appended segments are automatically extracted and forwarded as DASH events.
+   * Called by ErgoMediaSource immediately after construction.
+   */
+  enableEventDetection(sink: EventSink): void {
+    this.#eventSink = sink;
   }
 
   // ── Operations ────────────────────────────────────────────────────────────
 
   /**
    * Append bytes. Queued if another operation is in progress.
+   *
+   * If event detection is enabled, the leading boxes of the segment are scanned
+   * for emsg v1 boxes *before* the data is queued for the real MSE SourceBuffer.
+   * The scan short-circuits on the first moof box (emsg always precedes moof),
+   * keeping the overhead proportional to the number of leading boxes (~1–2).
    */
   async append(data: ArrayBuffer | ArrayBufferView): Promise<void> {
+    if (this.#eventSink) {
+      try {
+        for (const emsg of parseEmsgBoxes(data)) {
+          this.#eventSink.addEmsgEvent(emsg, this.wallAnchor);
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('[ergo-mse] emsg parse error (ignored):', e);
+      }
+    }
     return new Promise<void>((resolve, reject) => {
       this.#queue.push({ kind: 'append', data, resolve, reject });
       this.#processQueue();

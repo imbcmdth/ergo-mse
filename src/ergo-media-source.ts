@@ -17,6 +17,9 @@
 import type { ISourceBuffer } from './i-source-buffer';
 import { ManagedSourceBuffer } from './managed-source-buffer';
 import { TextSourceBuffer } from './text-source-buffer';
+import { EventSourceBuffer } from './event-source-buffer';
+import { EventSink } from './event-sink';
+import { DashEventEmitter } from './event-emitter';
 import { classifyTextMimeAndCodecs } from './text-codec';
 
 export interface AddSourceBufferOptions {
@@ -42,6 +45,11 @@ export class ErgoMediaSource {
   #videoEl: HTMLVideoElement | null = null;
   #objectUrl: string | null = null;
 
+  /** Shared DASH event infrastructure — created lazily on first addSourceBuffer call. */
+  #eventTrack:  TextTrack         | null = null;
+  #eventSink:   EventSink         | null = null;
+  #eventEmitter: DashEventEmitter | null = null;
+
   /**
    * Wall-clock epoch second corresponding to video.currentTime = 0.
    * Set by videl-player after sourceopen, before any setLiveSeekableRange calls.
@@ -60,8 +68,8 @@ export class ErgoMediaSource {
 
   /**
    * Returns `true` if the browser can play the given MIME/codec string OR if
-   * it is a text codec handled by `TextSourceBuffer`.  Mirrors the native
-   * `MediaSource.isTypeSupported` signature.
+   * it is a text/event codec handled by `TextSourceBuffer` / `EventSourceBuffer`.
+   * Mirrors the native `MediaSource.isTypeSupported` signature.
    */
   static isTypeSupported(mimeAndCodecs: string): boolean {
     const cls = classifyTextMimeAndCodecs(mimeAndCodecs);
@@ -140,6 +148,14 @@ export class ErgoMediaSource {
       this.#videoEl.load();
       this.#videoEl = null;
     }
+
+    // Tear down event infrastructure. The DashEventEmitter removes its
+    // cuechange listener. The TextTrack itself cannot be removed from the
+    // video element once added — it is left in place (harmless, mode=hidden).
+    this.#eventEmitter?.dispose();
+    this.#eventEmitter = null;
+    this.#eventSink    = null;
+    this.#eventTrack   = null;
   }
 
   // ── Source buffer factory ─────────────────────────────────────────────────
@@ -164,14 +180,43 @@ export class ErgoMediaSource {
     }
 
     const cls = classifyTextMimeAndCodecs(mimeAndCodecs);
+
+    // ── DASH EventStream buffer ───────────────────────────────────────────────
+    if (cls.kind === 'event-stream') {
+      this.#ensureEventInfrastructure();
+      return new EventSourceBuffer(this.#eventTrack!, this.#eventSink!);
+    }
+
+    // ── Text subtitle / caption buffer ────────────────────────────────────────
     if (cls.kind !== 'unknown') {
       const label = options.label ?? options.lang ?? 'subtitles';
       const lang  = options.lang ?? '';
       return new TextSourceBuffer(this.#videoEl, label, lang, mimeAndCodecs);
     }
 
-    const sb = this.#ms.addSourceBuffer(mimeAndCodecs);
-    return new ManagedSourceBuffer(sb);
+    // ── Real MSE audio/video buffer ───────────────────────────────────────────
+    // Always enable emsg detection on video/audio buffers so that any in-band
+    // DASH events embedded as emsg boxes are automatically extracted.
+    this.#ensureEventInfrastructure();
+    const sb  = this.#ms.addSourceBuffer(mimeAndCodecs);
+    const msb = new ManagedSourceBuffer(sb);
+    msb.enableEventDetection(this.#eventSink!);
+    return msb;
+  }
+
+  // ── Event infrastructure ──────────────────────────────────────────────────
+
+  /**
+   * Lazily create the shared event TextTrack, EventSink, and DashEventEmitter.
+   * Idempotent — safe to call multiple times.
+   */
+  #ensureEventInfrastructure(): void {
+    if (this.#eventTrack) return;
+    const track          = this.#videoEl!.addTextTrack('metadata', 'DASH Events', '');
+    track.mode           = 'hidden';
+    this.#eventTrack     = track;
+    this.#eventEmitter   = new DashEventEmitter(this.#videoEl!, track);
+    this.#eventSink      = new EventSink(track, this.#eventEmitter);
   }
 
   // ── MediaSource passthrough ───────────────────────────────────────────────

@@ -7,17 +7,25 @@ import { ErgoMediaSource } from '../src/ergo-media-source';
 import { ManagedSourceBuffer } from '../src/managed-source-buffer';
 import { TextSourceBuffer } from '../src/text-source-buffer';
 
+function createFakeTextTrack(): any {
+  return {
+    mode: 'hidden',
+    cues: [],
+    activeCues: [],
+    addCue: sinon.stub(),
+    removeCue: sinon.stub(),
+    addEventListener: sinon.stub(),
+    removeEventListener: sinon.stub(),
+  };
+}
+
 function createFakeVideoElement(): any {
   return {
     src: '',
     removeAttribute: sinon.stub(),
     load: sinon.stub(),
-    addTextTrack: sinon.stub().returns({
-      mode: 'hidden',
-      cues: [],
-      addCue: sinon.stub(),
-      removeCue: sinon.stub(),
-    }),
+    dispatchEvent: sinon.stub(),
+    addTextTrack: sinon.stub().callsFake(() => createFakeTextTrack()),
   };
 }
 

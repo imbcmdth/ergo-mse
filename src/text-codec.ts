@@ -23,6 +23,7 @@ export type TextCodecClass =
                                // bitmap rendering not supported
   | { kind: 'vtt-sidecar'  }  // Sidecar WebVTT file (text/vtt)
   | { kind: 'ttml-sidecar' }  // Sidecar TTML document (application/ttml+xml)
+  | { kind: 'event-stream' }  // DASH EventStream (application/dash+xml; codecs="event-stream")
   | { kind: 'unknown'      }; // Unrecognised codec / MIME string
 
 /**
@@ -76,6 +77,19 @@ export function classifyTextMimeAndCodecs(mimeAndCodecs: string): TextCodecClass
     lc.startsWith('application/ttml+xml ')
   ) {
     return { kind: 'ttml-sidecar' };
+  }
+
+  // ── DASH EventStream ──────────────────────────────────────────────────────
+  // Must check before the generic fMP4 codecs path because application/dash+xml
+  // is also used for MPDs and we only want to intercept it when the codec is
+  // explicitly "event-stream".
+  if (lc.startsWith('application/dash+xml')) {
+    const codecsMatch = mimeAndCodecs.match(/codecs\s*=\s*"([^"]+)"/i);
+    if (codecsMatch && codecsMatch[1].trim().toLowerCase() === 'event-stream') {
+      return { kind: 'event-stream' };
+    }
+    // application/dash+xml without the right codec → not a known text type
+    return { kind: 'unknown' };
   }
 
   // ── fMP4 codec string ─────────────────────────────────────────────────────
